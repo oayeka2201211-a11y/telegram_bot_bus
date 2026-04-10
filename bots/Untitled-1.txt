@@ -1,0 +1,1 @@
+mongodb+srv://oayeka2201211_db_user:NIBQt3t5rTtGLEqg@cluster0.qebd722.mongodb.net/telegram_bot_db?retryWrites=true&w=majority&ssl=true", tlsCAFile=certifi.where()
