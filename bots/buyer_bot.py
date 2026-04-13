@@ -344,11 +344,17 @@ async def start_buyer_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
     email = update.message.text.strip()
     if "@" not in email or "." not in email:
-        await update.message.reply_text("Invalid email. Please enter a valid email address:")
+        await update.message.reply_text(
+            "Invalid email. Please enter a valid email address:",
+            reply_markup=get_reply_keyboard(),
+        )
         return EMAIL
 
     context.user_data["email_address"] = email
-    await update.message.reply_text("Please enter your Telegram phone number:")
+    await update.message.reply_text(
+        "Please enter your Telegram phone number:",
+        reply_markup=get_reply_keyboard(),
+    )
     return PHONE
 
 
@@ -356,7 +362,10 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
     phone = update.message.text.strip()
     digits = "".join(ch for ch in phone if ch.isdigit())
     if len(digits) < 7:
-        await update.message.reply_text("Invalid phone. Please enter a valid phone number:")
+        await update.message.reply_text(
+            "Invalid phone. Please enter a valid phone number:",
+            reply_markup=get_reply_keyboard(),
+        )
         return PHONE
 
     normalized = ("+" + digits) if not phone.startswith("+") else phone
@@ -438,7 +447,10 @@ async def start_place_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         existing = db.buyers_collection.find_one({"telegram_id": update.effective_user.id})
     except Exception:
         logger.exception("DB lookup failed in start_place_order")
-        await msg.reply_text("❌ An internal error occurred. Please try again later.")
+        await msg.reply_text(
+            "❌ An internal error occurred. Please try again later.",
+            reply_markup=get_reply_keyboard(),
+        )
         return ConversationHandler.END
 
     if not existing:
@@ -512,7 +524,10 @@ async def show_subcategories(update: Update, context: ContextTypes.DEFAULT_TYPE)
         selected_category = context.user_data.get("selected_category")
 
     if not selected_category:
-        await query.message.reply_text("⚠️ Please choose a category first.")
+        await query.message.reply_text(
+            "⚠️ Please choose a category first.",
+            reply_markup=get_reply_keyboard(),
+        )
         return CATEGORY
 
     context.user_data["selected_category"] = selected_category
@@ -587,7 +602,10 @@ async def show_product_details(update: Update, context: ContextTypes.DEFAULT_TYP
 
     product = db.products.find_one({"_id": item_id})
     if not product:
-        await query.message.reply_text("❌ Product not found.")
+        await query.message.reply_text(
+            "❌ Product not found.",
+            reply_markup=get_reply_keyboard(),
+        )
         return PRODUCT
 
     details_message = (
@@ -598,7 +616,10 @@ async def show_product_details(update: Update, context: ContextTypes.DEFAULT_TYP
         f"Price: {_format_naira(_extract_product_price(product))}\n"
         f"Details: {_extract_product_description(product)}"
     )
-    await query.message.reply_text(details_message)
+    await query.message.reply_text(
+        details_message,
+        reply_markup=get_reply_keyboard(),
+    )
     return PRODUCT
 
 
@@ -612,7 +633,10 @@ async def start_order_for_product(update: Update, context: ContextTypes.DEFAULT_
     product = db.products.find_one({"_id": item_id})
 
     if not product:
-        await query.message.reply_text("❌ Product not found.")
+        await query.message.reply_text(
+            "❌ Product not found.",
+            reply_markup=get_reply_keyboard(),
+        )
         return PRODUCT
 
     context.user_data[ORDER_DRAFT_KEY] = {
@@ -624,7 +648,10 @@ async def start_order_for_product(update: Update, context: ContextTypes.DEFAULT_
         "category": _extract_product_category(product) or context.user_data.get("selected_category", ""),
     }
 
-    await query.message.reply_text("How many would you like to order?")
+    await query.message.reply_text(
+        "How many would you like to order?",
+        reply_markup=get_reply_keyboard(),
+    )
     context.chat_data["current_state"] = "ORDER_QUANTITY"
     return ORDER_QUANTITY
 
@@ -632,18 +659,27 @@ async def start_order_for_product(update: Update, context: ContextTypes.DEFAULT_
 async def get_order_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     quantity_text = update.message.text.strip()
     if not quantity_text.isdigit() or int(quantity_text) <= 0:
-        await update.message.reply_text("Please enter a valid quantity as a number.")
+        await update.message.reply_text(
+            "Please enter a valid quantity as a number.",
+            reply_markup=get_reply_keyboard(),
+        )
         return ORDER_QUANTITY
 
     order_data = context.user_data.get(ORDER_DRAFT_KEY)
     if not order_data:
-        await update.message.reply_text("⚠️ No active order. Tap 'Order this' again.")
+        await update.message.reply_text(
+            "⚠️ No active order. Tap 'Order this' again.",
+            reply_markup=get_reply_keyboard(),
+        )
         return ConversationHandler.END
 
     quantity = int(quantity_text)
     order_data["quantity"] = quantity
     order_data["total_price"] = order_data.get("unit_price", 0) * quantity
-    await update.message.reply_text("Please enter your name:")
+    await update.message.reply_text(
+        "Please enter your name:",
+        reply_markup=get_reply_keyboard(),
+    )
     context.chat_data["current_state"] = "ORDER_NAME"
     return ORDER_NAME
 
@@ -651,16 +687,25 @@ async def get_order_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def get_order_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     student_name = update.message.text.strip()
     if len(student_name) < 2:
-        await update.message.reply_text("Please enter a valid name.")
+        await update.message.reply_text(
+            "Please enter a valid name.",
+            reply_markup=get_reply_keyboard(),
+        )
         return ORDER_NAME
 
     order_data = context.user_data.get(ORDER_DRAFT_KEY)
     if not order_data:
-        await update.message.reply_text("⚠️ No active order. Tap 'Order this' again.")
+        await update.message.reply_text(
+            "⚠️ No active order. Tap 'Order this' again.",
+            reply_markup=get_reply_keyboard(),
+        )
         return ConversationHandler.END
 
     order_data["student_name"] = student_name
-    await update.message.reply_text("Which hall should we deliver to?")
+    await update.message.reply_text(
+        "Which hall should we deliver to?",
+        reply_markup=get_reply_keyboard(),
+    )
     context.chat_data["current_state"] = "ORDER_HALL"
     return ORDER_HALL
 
@@ -668,16 +713,25 @@ async def get_order_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_order_hall(update: Update, context: ContextTypes.DEFAULT_TYPE):
     hall = update.message.text.strip()
     if len(hall) < 2:
-        await update.message.reply_text("Please enter a valid hall.")
+        await update.message.reply_text(
+            "Please enter a valid hall.",
+            reply_markup=get_reply_keyboard(),
+        )
         return ORDER_HALL
 
     order_data = context.user_data.get(ORDER_DRAFT_KEY)
     if not order_data:
-        await update.message.reply_text("⚠️ No active order. Tap 'Order this' again.")
+        await update.message.reply_text(
+            "⚠️ No active order. Tap 'Order this' again.",
+            reply_markup=get_reply_keyboard(),
+        )
         return ConversationHandler.END
 
     order_data["hall"] = hall
-    await update.message.reply_text("What is your room number?")
+    await update.message.reply_text(
+        "What is your room number?",
+        reply_markup=get_reply_keyboard(),
+    )
     context.chat_data["current_state"] = "ORDER_ROOM"
     return ORDER_ROOM
 
@@ -685,12 +739,18 @@ async def get_order_hall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def get_order_room(update: Update, context: ContextTypes.DEFAULT_TYPE):
     room_number = update.message.text.strip()
     if len(room_number) < 1:
-        await update.message.reply_text("Please enter a valid room number.")
+        await update.message.reply_text(
+            "Please enter a valid room number.",
+            reply_markup=get_reply_keyboard(),
+        )
         return ORDER_ROOM
 
     order_data = context.user_data.get(ORDER_DRAFT_KEY)
     if not order_data:
-        await update.message.reply_text("⚠️ No active order. Tap 'Order this' again.")
+        await update.message.reply_text(
+            "⚠️ No active order. Tap 'Order this' again.",
+            reply_markup=get_reply_keyboard(),
+        )
         return ConversationHandler.END
 
     order_data["room_number"] = room_number
@@ -709,7 +769,10 @@ async def choose_delivery_time(update: Update, context: ContextTypes.DEFAULT_TYP
 
     order_data = context.user_data.get(ORDER_DRAFT_KEY)
     if not order_data:
-        await query.message.reply_text("⚠️ No active order. Tap 'Order this' again.")
+        await query.message.reply_text(
+            "⚠️ No active order. Tap 'Order this' again.",
+            reply_markup=get_reply_keyboard(),
+        )
         return ConversationHandler.END
 
     order_data["delivery_window"] = delivery_window
@@ -734,7 +797,10 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Failed to remove confirm/cancel buttons for order")
     order_data = context.user_data.get(ORDER_DRAFT_KEY)
     if not order_data:
-        await query.message.reply_text("⚠️ No active order found.")
+        await query.message.reply_text(
+            "⚠️ No active order found.",
+            reply_markup=get_reply_keyboard(),
+        )
         return ConversationHandler.END
 
     created_at = datetime.utcnow().isoformat()
@@ -764,7 +830,10 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         db.orders_collection.update_one({"_id": result.inserted_id}, {"$set": {"order_id": order_id}})
     except Exception:
         logger.exception("Failed to save order")
-        await query.message.reply_text("❌ Could not save your order right now. Please try again.")
+        await query.message.reply_text(
+            "❌ Could not save your order right now. Please try again.",
+            reply_markup=get_reply_keyboard(),
+        )
         context.user_data.pop(ORDER_DRAFT_KEY, None)
         return ConversationHandler.END
 
@@ -814,7 +883,10 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Failed to remove confirm/cancel buttons for cancelled order")
     context.user_data.pop(ORDER_DRAFT_KEY, None)
     context.chat_data["current_state"] = "PRODUCT"
-    await query.message.reply_text("❌ Order cancelled.")
+    await query.message.reply_text(
+        "❌ Order cancelled.",
+        reply_markup=get_reply_keyboard(),
+    )
     return PRODUCT
 
 
