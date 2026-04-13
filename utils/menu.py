@@ -2,14 +2,10 @@ from telegram import BotCommand, KeyboardButton, ReplyKeyboardMarkup
 
 
 MENU_COMMANDS = [
-    ("viewcart", "🛍️ View your cart"),
-    ("placeorder", "🛒 Place an order"),
-    ("paymenthistory", "💳 View payment history"),
-    ("support", "📞 Contact customer support"),
-    ("payforproducts", "💰 Pay for products"),
+    ("browseproducts", "🛍️ Browse products"),
+    ("myorders", "📦 View your orders"),
+    ("help", "🆘 Get help"),
     ("chatid", "🆔 Show chat id"),
-    ("testordersgroup", "✅ Test group post"),
-    ("debugstate", "🔍 Debug conversation state"),
 ]
 
 

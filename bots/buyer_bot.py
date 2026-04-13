@@ -1126,6 +1126,7 @@ def get_buyer_conversation():
         entry_points=[
             CommandHandler("buyer", start_buyer_flow),
             CommandHandler("placeorder", start_place_order),
+            CommandHandler("browseproducts", start_place_order),
             MessageHandler(filters.Regex(r"^Browse Products$"), start_place_order),
             CallbackQueryHandler(start_buyer_flow, pattern=r"^start_buyer$"),
             CallbackQueryHandler(start_place_order, pattern=r"^placeorder$"),
