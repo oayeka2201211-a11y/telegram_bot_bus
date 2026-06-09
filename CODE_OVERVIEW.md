@@ -4,7 +4,7 @@ This document explains how the Telegram bot works, how data flows through the sy
 
 ## What This Bot Does
 
-This is a Telegram buyer bot that lets users register, browse sellers and products, add items to a cart, and submit a payment reference. It reads and writes data in Firebase Realtime Database.
+This is a Telegram buyer bot that lets users register, browse brands and products, add items to a cart, and submit a payment reference. It reads and writes data in Firebase Firestore.
 
 ## Main Entry Point
 
@@ -19,7 +19,7 @@ This is a Telegram buyer bot that lets users register, browse sellers and produc
 2. Bot shows role selection; user chooses Buyer.
 3. Bot checks if buyer is already registered.
 4. If not registered, bot collects email and phone and saves the buyer.
-5. User places an order, picks category, seller, and product.
+5. User places an order, picks a brand, and chooses a product.
 6. User can add products to cart, view cart, and submit payment reference.
 
 ## Key Files
@@ -28,16 +28,16 @@ This is a Telegram buyer bot that lets users register, browse sellers and produc
   - Telegram bot setup and handler wiring.
 
 - `bots/buyer_bot.py`
-  - All buyer conversation logic: registration, category/seller/product selection, cart, and payment reference.
+  - All buyer conversation logic: registration, brand/product selection, cart, and payment reference.
 
 - `utils/database.py`
-  - Firebase Realtime Database adapter.
+  - Firebase Firestore adapter.
   - Collection wrappers and read/write methods.
 
 - `utils/logger.py`
   - Application logging.
 
-## Database Access (Firebase Realtime DB)
+## Database Access (Firebase Firestore)
 
 Database operations are implemented through `utils/database.py`. The buyer flow in `bots/buyer_bot.py` calls these functions to read and write data.
 
@@ -47,11 +47,12 @@ Database operations are implemented through `utils/database.py`. The buyer flow 
   - `buyers_collection.find_one({"telegram_id": user_id})`
 - Check if buyer can place order:
   - `buyers_collection.find_one({"telegram_id": user_id})`
-- Load sellers for a category:
-  - `sellers_collection.find({"main_category": category})`
-  - fallback: `sellers_collection.find({"categories": category})`
-- Load products for seller:
-  - `products.find({"business_name": seller_name})`
+- Load visible brands:
+  - `sellers_collection.find({})`
+  - `products.find({})`
+  - brand names come from `business_name`, with `brand`/`brand_name` product fallbacks
+- Load products for brand:
+  - product documents where `business_name`, `brand`, `brand_name`, or `brandName` matches the selected brand
 - Load cart:
   - `cart_collection.find_one({"telegram_id": buyer_id})`
 
@@ -94,8 +95,7 @@ The buyer conversation states are defined in `bots/buyer_bot.py`:
 
 - `EMAIL`
 - `PHONE`
-- `CATEGORY`
-- `SUBCATEGORY`
+- `BRAND`
 - `PRODUCT`
 
 ## Notes for Contributors
@@ -104,4 +104,3 @@ The buyer conversation states are defined in `bots/buyer_bot.py`:
 - All database logic is contained in `utils/database.py`.
 - Buyer interaction logic is in `bots/buyer_bot.py`.
 - Changes to data structure should keep the cart/product shape consistent.
-

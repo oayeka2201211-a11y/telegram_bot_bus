@@ -12,19 +12,9 @@ from utils.logger import logger
 from utils.menu import get_reply_keyboard
 
 # Conversation states
-EMAIL, PHONE, CATEGORY, SUBCATEGORY, PRODUCT, ORDER_QUANTITY, ORDER_NAME, ORDER_HALL, ORDER_ROOM, DELIVERY_TIME, ORDER_CONFIRM = range(11)
+EMAIL, PHONE, BRAND, PRODUCT, ORDER_QUANTITY, ORDER_NAME, ORDER_HALL, ORDER_ROOM, DELIVERY_TIME, ORDER_CONFIRM = range(10)
 PAYMENT_REF_STATE = "PAYMENT_REF"
 ORDER_DRAFT_KEY = "pending_order"
-
-CATEGORY_MAP = {
-    "Snacks": [],
-    "Fashion & Style": ["Accessories", "Bags", "Clothing", "Footwear", "Sport Casual"],
-    "Gadgets": ["Ipods", "Tablets & Ipads", "Laptops", "Accessories"],
-    "Beauty & Personal care": ["Fragrance", "Hair Attachment", "Hair care", "Cosmetics"],
-    "Books": ["Journals"],
-    "Babes & Gifts": ["Customized Gifts", "Gift Boxes", "Money bouqet", "Crochet Bouqet"],
-    "Sport & Fitness": ["Jerseys", "Gym Shorts"]
-}
 
 DELIVERY_WINDOWS = [
     "Today 5–6 PM",
@@ -59,25 +49,6 @@ def _load_cart(buyer_id: int):
 
 def _normalize_text(value):
     return str(value or "").strip().lower()
-
-
-def _coerce_text_list(value):
-    if isinstance(value, str) and value.strip():
-        return [value.strip()]
-    if isinstance(value, (list, tuple, set)):
-        values = []
-        for item in value:
-            if isinstance(item, str) and item.strip():
-                values.append(item.strip())
-        return values
-    return []
-
-
-def _extract_seller_categories(item):
-    categories = []
-    for key in ("main_category", "category", "categories", "product_category"):
-        categories.extend(_coerce_text_list(item.get(key)))
-    return categories
 
 
 def _extract_product_name(item):
@@ -164,97 +135,52 @@ def _extract_product_image(item):
     return None
 
 
-def _extract_product_category(item):
-    for category in _extract_product_categories(item):
-        return category
+def _extract_brand_name(item):
+    for key in ("business_name", "brand", "brand_name", "brandName", "name"):
+        value = item.get(key)
+        if value:
+            return str(value).strip()
     return ""
 
 
-def _extract_product_categories(item):
-    categories = []
-    for key in (
-        "category",
-        "categories",
-        "main_category",
-        "product_category",
-        "seller_category",
-        "mainCategory",
-        "productCategory",
-    ):
-        categories.extend(_coerce_text_list(item.get(key)))
-    return categories
+def _extract_stock_count(item):
+    raw_stock = item.get("amount_in_stock", item.get("quantity", 0))
+    try:
+        return int(raw_stock)
+    except (TypeError, ValueError):
+        return 0
 
 
-def _collect_available_categories():
-    categories = []
-    seen = set()
-
-    for category in CATEGORY_MAP.keys():
-        normalized = _normalize_text(category)
-        if normalized not in seen:
-            seen.add(normalized)
-            categories.append(category)
-
-    for seller in db.sellers_collection.find({}):
-        for category in _extract_seller_categories(seller):
-            normalized = _normalize_text(category)
-            if category and normalized not in seen:
-                seen.add(normalized)
-                categories.append(category)
-
-    for product in db.products.find({}):
-        for category in _extract_product_categories(product):
-            normalized = _normalize_text(category)
-            if category and normalized not in seen:
-                seen.add(normalized)
-                categories.append(category)
-
-    return categories or list(CATEGORY_MAP.keys())
-
-
-def _products_for_category(category_name):
-    selected = []
-    normalized_category = _normalize_text(category_name)
-    seller_names_in_category = {
-        _normalize_text(seller.get("business_name"))
-        for seller in db.sellers_collection.find({})
-        if any(
-            _normalize_text(item) == normalized_category
-            for item in _extract_seller_categories(seller)
-        ) and seller.get("business_name")
-    }
-
-    for product in db.products.find({}):
-        product_categories = _extract_product_categories(product)
-        if any(_normalize_text(item) == normalized_category for item in product_categories):
-            selected.append(product)
-            continue
-
-        brand_name = _normalize_text(product.get("business_name") or product.get("brand"))
-        if brand_name and brand_name in seller_names_in_category:
-            selected.append(product)
-    return selected
-
-
-def _brands_for_category(category_name):
+def _collect_available_brands():
     brand_names = []
     seen = set()
-    normalized_category = _normalize_text(category_name)
 
     for seller in db.sellers_collection.find({}):
-        if any(_normalize_text(item) == normalized_category for item in _extract_seller_categories(seller)):
-            brand_name = seller.get("business_name")
-            if brand_name and brand_name not in seen:
-                seen.add(brand_name)
-                brand_names.append(brand_name)
+        brand_name = _extract_brand_name(seller)
+        normalized = _normalize_text(brand_name)
+        if brand_name and normalized not in seen:
+            seen.add(normalized)
+            brand_names.append(brand_name)
 
-    for product in _products_for_category(category_name):
-        brand_name = product.get("business_name") or product.get("brand")
-        if brand_name and brand_name not in seen:
-            seen.add(brand_name)
+    for product in db.products.find({}):
+        brand_name = _extract_brand_name(product)
+        normalized = _normalize_text(brand_name)
+        if brand_name and normalized not in seen:
+            seen.add(normalized)
             brand_names.append(brand_name)
 
     return brand_names
+
+
+def _products_for_brand(brand_name):
+    selected = []
+    normalized_brand = _normalize_text(brand_name)
+
+    for product in db.products.find({}):
+        if _normalize_text(_extract_brand_name(product)) == normalized_brand:
+            selected.append(product)
+
+    return selected
 
 
 def _delivery_option_buttons():
@@ -328,11 +254,7 @@ async def start_buyer_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👋 Hi {update.effective_user.first_name or 'there'} — you're already registered.",
             reply_markup=get_reply_keyboard(),
         )
-        await msg.reply_text(
-            "Use the reply keyboard below for the same commands in the bot menu.",
-            reply_markup=get_reply_keyboard(),
-        )
-        return ConversationHandler.END
+        return await show_brands(update, context)
 
     await msg.reply_text(
         "🛒 Buyer registration — please enter your email address:",
@@ -400,40 +322,48 @@ async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 Hi {update.effective_user.first_name or 'there'} — welcome!",
         reply_markup=get_reply_keyboard(),
     )
-    await update.message.reply_text(
-        "Use the reply keyboard below for the same commands in the bot menu.",
-        reply_markup=get_reply_keyboard(),
-    )
-    return ConversationHandler.END
+    return await show_brands(update, context)
 
 
 # --------------------------
-# Category Menu
+# Brand Menu
 # --------------------------
-async def show_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def show_brands(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     msg = query.message if query else update.message
 
-    categories = _collect_available_categories()
-    keyboard = [[InlineKeyboardButton(cat, callback_data=f"cat::{cat}")] for cat in categories]
+    brands = _collect_available_brands()
+    if not brands:
+        await msg.reply_text(
+            "No brands are available yet.",
+            reply_markup=get_reply_keyboard(),
+        )
+        context.chat_data["conversation_active"] = False
+        context.chat_data["current_state"] = None
+        return ConversationHandler.END
+
+    keyboard = [[InlineKeyboardButton(brand_name, callback_data=f"brand::{brand_name}")] for brand_name in brands]
     markup = InlineKeyboardMarkup(keyboard)
 
     if query:
-        await query.answer()
         try:
-            await msg.edit_text("🛍️ Choose a category:", reply_markup=markup)
+            await query.answer()
+        except Exception:
+            pass
+        try:
+            await msg.edit_text("Choose a brand:", reply_markup=markup)
         except:
-            await msg.reply_text("🛍️ Choose a category:", reply_markup=markup)
+            await msg.reply_text("Choose a brand:", reply_markup=markup)
     else:
-        await msg.reply_text("🛍️ Choose a category:", reply_markup=markup)
+        await msg.reply_text("Choose a brand:", reply_markup=markup)
 
     context.chat_data["conversation_active"] = True
-    context.chat_data["current_state"] = "CATEGORY"
-    return CATEGORY
+    context.chat_data["current_state"] = "BRAND"
+    return BRAND
 
 
 async def start_place_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point for placing an order (checks registration then shows categories)."""
+    """Entry point for placing an order (checks registration then shows brands)."""
     query = update.callback_query
     msg = query.message if query else update.message
 
@@ -462,7 +392,7 @@ async def start_place_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.user_data.pop("awaiting_payment_ref", None)
     context.user_data.pop(ORDER_DRAFT_KEY, None)
-    return await show_categories(update, context)
+    return await show_brands(update, context)
 
 
 async def _render_products_list(message, products, heading, back_callback):
@@ -512,60 +442,6 @@ async def _render_products_list(message, products, heading, back_callback):
 
 
 # --------------------------
-# Category → Brand List
-# --------------------------
-async def show_subcategories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data.startswith("cat::"):
-        selected_category = query.data.replace("cat::", "")
-    else:
-        selected_category = context.user_data.get("selected_category")
-
-    if not selected_category:
-        await query.message.reply_text(
-            "⚠️ Please choose a category first.",
-            reply_markup=get_reply_keyboard(),
-        )
-        return CATEGORY
-
-    context.user_data["selected_category"] = selected_category
-
-    if _normalize_text(selected_category) == "snacks":
-        products = _products_for_category(selected_category)
-        context.chat_data["current_state"] = "PRODUCT"
-        return await _render_products_list(
-            query.message,
-            products,
-            f"Products in {selected_category}",
-            "nav::back_to_categories",
-        )
-
-    brands = _brands_for_category(selected_category)
-    if not brands:
-        products = _products_for_category(selected_category)
-        context.chat_data["current_state"] = "PRODUCT"
-        return await _render_products_list(
-            query.message,
-            products,
-            f"Products in {selected_category}",
-            "nav::back_to_categories",
-        )
-
-    keyboard = [
-        [InlineKeyboardButton(brand_name, callback_data=f"brand::{brand_name}")]
-        for brand_name in brands
-    ]
-    keyboard.append([InlineKeyboardButton("⬅ Back", callback_data="nav::back_to_categories")])
-    markup = InlineKeyboardMarkup(keyboard)
-
-    await query.message.edit_text(f"🏬 Brands for {selected_category}:", reply_markup=markup)
-    context.chat_data["current_state"] = "SUBCATEGORY"
-    return SUBCATEGORY
-
-
-# --------------------------
 # Brand → Products
 # --------------------------
 async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -573,22 +449,16 @@ async def show_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     selected_brand = query.data.replace("brand::", "")
-    selected_category = context.user_data.get("selected_category")
     context.user_data["selected_brand"] = selected_brand
 
-    products = []
-    for item in db.products.find({"business_name": selected_brand}):
-        product_category = _extract_product_category(item)
-        if selected_category and product_category and _normalize_text(product_category) != _normalize_text(selected_category):
-            continue
-        products.append(item)
+    products = _products_for_brand(selected_brand)
 
     context.chat_data["current_state"] = "PRODUCT"
     return await _render_products_list(
         query.message,
         products,
         f"Products from {selected_brand}",
-        "nav::back_to_subcategory",
+        "nav::back_to_brands",
     )
 
 
@@ -611,7 +481,6 @@ async def show_product_details(update: Update, context: ContextTypes.DEFAULT_TYP
     details_message = (
         f"{_extract_product_name(product)}\n"
         f"Brand: {product.get('business_name') or product.get('brand') or 'N/A'}\n"
-        f"Category: {_extract_product_category(product) or context.user_data.get('selected_category', 'N/A')}\n"
         f"SKU: {_extract_product_sku(product)}\n"
         f"Price: {_format_naira(_extract_product_price(product))}\n"
         f"Details: {_extract_product_description(product)}"
@@ -639,13 +508,21 @@ async def start_order_for_product(update: Update, context: ContextTypes.DEFAULT_
         )
         return PRODUCT
 
+    available_stock = _extract_stock_count(product)
+    if available_stock <= 0:
+        await query.message.reply_text(
+            f"Sorry, {_extract_product_name(product)} is out of stock right now.",
+            reply_markup=get_reply_keyboard(),
+        )
+        return PRODUCT
+
     context.user_data[ORDER_DRAFT_KEY] = {
         "product_id": item_id,
         "product_name": _extract_product_name(product),
         "product_sku": _extract_product_sku(product),
         "unit_price": _extract_product_price(product),
         "brand": product.get("business_name") or product.get("brand") or "",
-        "category": _extract_product_category(product) or context.user_data.get("selected_category", ""),
+        "available_stock": available_stock,
     }
 
     await query.message.reply_text(
@@ -674,6 +551,23 @@ async def get_order_quantity(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return ConversationHandler.END
 
     quantity = int(quantity_text)
+    available_stock = int(order_data.get("available_stock") or 0)
+    if available_stock <= 0:
+        await update.message.reply_text(
+            f"Sorry, {order_data.get('product_name', 'this product')} is out of stock right now.",
+            reply_markup=get_reply_keyboard(),
+        )
+        context.user_data.pop(ORDER_DRAFT_KEY, None)
+        context.chat_data["current_state"] = "PRODUCT"
+        return PRODUCT
+
+    if quantity > available_stock:
+        await update.message.reply_text(
+            f"Only {available_stock} left for {order_data.get('product_name', 'this product')}. Enter a lower quantity.",
+            reply_markup=get_reply_keyboard(),
+        )
+        return ORDER_QUANTITY
+
     order_data["quantity"] = quantity
     order_data["total_price"] = order_data.get("unit_price", 0) * quantity
     await update.message.reply_text(
@@ -816,7 +710,6 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "product_id": order_data.get("product_id"),
         "product_name": order_data.get("product_name"),
         "brand": order_data.get("brand"),
-        "category": order_data.get("category"),
         "quantity": order_data.get("quantity"),
         "price": order_data.get("unit_price"),
         "total_price": order_data.get("total_price"),
@@ -825,9 +718,25 @@ async def confirm_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
 
     try:
-        result = db.orders_collection.insert_one(payload)
-        order_id = f"ORD-{str(result.inserted_id)[-6:].upper()}"
-        db.orders_collection.update_one({"_id": result.inserted_id}, {"$set": {"order_id": order_id}})
+        result = db.reserve_stock_and_insert_order(
+            order_data.get("product_id"),
+            int(order_data.get("quantity") or 0),
+            payload,
+        )
+        order_id = result.order_id
+        payload["order_id"] = order_id
+    except db.StockReservationError as exc:
+        if exc.reason in {"missing", "out_of_stock"} or exc.available_stock <= 0:
+            message = f"Sorry, {exc.product_name} is out of stock right now."
+        else:
+            message = f"Only {exc.available_stock} left for {exc.product_name}. Please start the order again with a lower quantity."
+        await query.message.reply_text(
+            message,
+            reply_markup=get_reply_keyboard(),
+        )
+        context.user_data.pop(ORDER_DRAFT_KEY, None)
+        context.chat_data["current_state"] = "PRODUCT"
+        return PRODUCT
     except Exception:
         logger.exception("Failed to save order")
         await query.message.reply_text(
@@ -1036,16 +945,10 @@ async def handle_payment_reference(update: Update, context: ContextTypes.DEFAULT
 # --------------------------
 # Navigation / Cancel
 # --------------------------
-async def back_to_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def back_to_brands(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query: await query.answer()
-    return await show_categories(update, context)
-
-
-async def back_to_subcategory(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query: await query.answer()
-    return await show_subcategories(update, context)
+    return await show_brands(update, context)
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1074,7 +977,7 @@ async def debug_state(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def debug_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         all_products = list(db.products.find({}))
-        snack_products = _products_for_category("Snacks")
+        brands = _collect_available_brands()
     except Exception:
         logger.exception("Failed to fetch products in debug_products")
         await update.message.reply_text(
@@ -1085,7 +988,7 @@ async def debug_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = [
         f"Total products visible: {len(all_products)}",
-        f"Snack products matched: {len(snack_products)}",
+        f"Brands visible: {len(brands)}",
     ]
 
     if not all_products:
@@ -1098,22 +1001,14 @@ async def debug_products(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(
             f"{index}. id={product.get('_id') or product.get('id') or 'N/A'} | "
             f"name={_extract_product_name(product)} | "
-            f"category={product.get('category', 'N/A')} | "
-            f"categories={product.get('categories', 'N/A')} | "
+            f"brand={_extract_brand_name(product) or 'N/A'} | "
             f"price={product.get('price', product.get('amount', 'N/A'))} | "
             f"stock={product.get('amount_in_stock', 'N/A')}"
         )
 
-    if snack_products:
-        lines.extend(["", "Matched snacks:"])
-        for index, product in enumerate(snack_products[:5], start=1):
-            lines.append(
-                f"{index}. id={product.get('_id') or product.get('id') or 'N/A'} | "
-                f"name={_extract_product_name(product)} | "
-                f"category={_extract_product_category(product) or 'N/A'} | "
-                f"price={_extract_product_price(product)} | "
-                f"stock={product.get('amount_in_stock', 'N/A')}"
-            )
+    if brands:
+        lines.extend(["", "Visible brands:"])
+        lines.extend(f"- {brand_name}" for brand_name in brands[:10])
 
     await update.message.reply_text("\n".join(lines), reply_markup=get_reply_keyboard())
 
@@ -1147,23 +1042,16 @@ def get_buyer_conversation():
                 CallbackQueryHandler(start_buyer_flow, pattern=r"^start_buyer$"),
                 CallbackQueryHandler(start_place_order, pattern=r"^placeorder$")
             ],
-            CATEGORY: [
-                CallbackQueryHandler(show_subcategories, pattern=r"^cat::.+$"),
-                CallbackQueryHandler(back_to_categories, pattern=r"^nav::back_to_categories$"),
-                CallbackQueryHandler(start_buyer_flow, pattern=r"^start_buyer$"),
-                CallbackQueryHandler(start_place_order, pattern=r"^placeorder$")
-            ],
-            SUBCATEGORY: [
+            BRAND: [
                 CallbackQueryHandler(show_products, pattern=r"^brand::.+$"),
-                CallbackQueryHandler(back_to_categories, pattern=r"^nav::back_to_categories$"),
+                CallbackQueryHandler(back_to_brands, pattern=r"^nav::back_to_brands$"),
                 CallbackQueryHandler(start_buyer_flow, pattern=r"^start_buyer$"),
                 CallbackQueryHandler(start_place_order, pattern=r"^placeorder$")
             ],
             PRODUCT: [
                 CallbackQueryHandler(show_product_details, pattern=r"^details::.+$"),
                 CallbackQueryHandler(start_order_for_product, pattern=r"^order::.+$"),
-                CallbackQueryHandler(back_to_subcategory, pattern=r"^nav::back_to_subcategory$"),
-                CallbackQueryHandler(back_to_categories, pattern=r"^nav::back_to_categories$"),
+                CallbackQueryHandler(back_to_brands, pattern=r"^nav::back_to_brands$"),
                 CallbackQueryHandler(start_buyer_flow, pattern=r"^start_buyer$"),
                 CallbackQueryHandler(start_place_order, pattern=r"^placeorder$")
             ],

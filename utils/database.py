@@ -21,6 +21,7 @@ from firebase_admin import credentials, firestore
 
 FIREBASE_SERVICE_ACCOUNT = os.getenv("FIREBASE_SERVICE_ACCOUNT")
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+_stale_google_credentials = False
 
 # candidate file in repo root
 candidate = os.path.join(os.path.dirname(os.path.dirname(__file__)), "zistack-76128-firebase-adminsdk-fbsvc-641b689f33.json")
@@ -56,14 +57,18 @@ try:
                     logger.info(f"Loaded Firebase credentials from file: {SERVICE_ACCOUNT_FILE}")
                 except Exception as e:
                     logger.error(f"Failed to load credentials from {SERVICE_ACCOUNT_FILE}: {e}")
+                    _stale_google_credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS") == SERVICE_ACCOUNT_FILE
             else:
                 logger.warning(f"GOOGLE_APPLICATION_CREDENTIALS is set but file not found: {SERVICE_ACCOUNT_FILE}")
+                _stale_google_credentials = os.getenv("GOOGLE_APPLICATION_CREDENTIALS") == SERVICE_ACCOUNT_FILE
 
         # Initialize app if we have credentials
         if cred is not None:
             _app = firebase_admin.initialize_app(cred)
             logger.info("Initialized Firebase app with Firestore")
         else:
+            if _stale_google_credentials:
+                os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
             # Last resort: try default credentials — will raise useful error in environments without creds
             try:
                 _app = firebase_admin.initialize_app()
@@ -75,13 +80,25 @@ try:
                     "  - FIREBASE_SERVICE_ACCOUNT env var (JSON text or base64), or\n"
                     "  - GOOGLE_APPLICATION_CREDENTIALS env var pointing to the service account file on the container, or\n"
                     f"  - place the service account JSON at: {candidate}\n"
+                    "If GOOGLE_APPLICATION_CREDENTIALS points to an old missing file, update or remove it.\n"
                     f"Original error: {e}"
                 )
                 logger.error(msg)
                 raise RuntimeError(msg)
     else:
         _app = firebase_admin.get_app()
-    _firestore_client = firestore.client()
+    try:
+        _firestore_client = firestore.client()
+    except Exception as e:
+        msg = (
+            "Firebase initialized, but Firestore credentials are not usable. Provide either:\n"
+            "  - FIREBASE_SERVICE_ACCOUNT env var (JSON text or base64), or\n"
+            "  - GOOGLE_APPLICATION_CREDENTIALS env var pointing to an existing service account JSON file, or\n"
+            f"  - place the service account JSON at: {candidate}\n"
+            f"Original error: {e}"
+        )
+        logger.error(msg)
+        raise RuntimeError(msg) from e
 except Exception as e:
     logger.error(f"Failed to initialize Firebase app / Firestore client: {e}")
     raise
@@ -271,6 +288,14 @@ class FirebaseCollection:
         return f"FirebaseCollection({self.path})"
 
 
+class StockReservationError(Exception):
+    def __init__(self, reason: str, available_stock: int = 0, product_name: str = "this product"):
+        super().__init__(reason)
+        self.reason = reason
+        self.available_stock = available_stock
+        self.product_name = product_name
+
+
 # --- Collections similar to previous interface ---
 sellers_collection = FirebaseCollection('sellers')
 buyers_collection = FirebaseCollection('buyers')
@@ -284,6 +309,53 @@ orders_collection = FirebaseCollection('orders')
 products = products_collection
 payments = payments_collection
 orders = orders_collection
+
+
+def _read_stock_count(product: Dict[str, Any]) -> int:
+    raw_stock = product.get("amount_in_stock", product.get("quantity", 0))
+    try:
+        return int(raw_stock)
+    except (TypeError, ValueError):
+        return 0
+
+
+def reserve_stock_and_insert_order(product_id: str, quantity: int, order_payload: Dict[str, Any]):
+    product_ref = products_collection.collection.document(str(product_id))
+    order_ref = orders_collection.collection.document()
+    transaction = _firestore_client.transaction()
+
+    @firestore.transactional
+    def _run_in_transaction(transaction):
+        snapshot = product_ref.get(transaction=transaction)
+        if not snapshot.exists:
+            raise StockReservationError("missing", 0, order_payload.get("product_name") or "this product")
+
+        product = snapshot.to_dict() or {}
+        available_stock = _read_stock_count(product)
+        product_name = product.get("name") or product.get("product_name") or order_payload.get("product_name") or "this product"
+
+        if available_stock <= 0:
+            raise StockReservationError("out_of_stock", 0, product_name)
+        if quantity > available_stock:
+            raise StockReservationError("insufficient_stock", available_stock, product_name)
+
+        stock_field = "amount_in_stock" if "amount_in_stock" in product or "quantity" not in product else "quantity"
+        order_id = f"ORD-{order_ref.id[-6:].upper()}"
+        payload = dict(order_payload)
+        payload["_id"] = order_ref.id
+        payload["id"] = order_ref.id
+        payload["order_id"] = order_id
+
+        transaction.update(product_ref, {stock_field: available_stock - quantity})
+        transaction.set(order_ref, _serialize_value(payload))
+        class Res: pass
+        res = Res()
+        res.inserted_id = order_ref.id
+        res.order_id = order_id
+        return res
+
+    return _run_in_transaction(transaction)
+
 
 # --- Helper functions matching previous API ---
 
